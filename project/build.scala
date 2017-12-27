@@ -12,7 +12,7 @@ import sbtrelease.Utilities._
 import com.typesafe.sbt.pgp.PgpKeys._
 
 import com.typesafe.sbt.osgi.OsgiKeys
-import com.typesafe.sbt.osgi.SbtOsgi._
+import com.typesafe.sbt.osgi.SbtOsgi
 
 import sbtbuildinfo.BuildInfoPlugin.autoImport._
 
@@ -37,8 +37,9 @@ object build {
       // getPublishTo fails if no publish repository is set up.
       val ex = st.extract
       val ref = ex.get(thisProjectRef)
-      Classpaths.getPublishTo(ex.get(publishTo in Global in ref))
-      st
+      val (newState, value) = ex.runTask(publishTo in Global in ref, st)
+      Classpaths.getPublishTo(value)
+      newState
     },
     enableCrossBuild = true
   )
@@ -46,7 +47,7 @@ object build {
   val scalaCheckVersion = SettingKey[String]("scalaCheckVersion")
   val kindProjectorVersion = SettingKey[String]("kindProjectorVersion")
 
-  private[this] def gitHash(): String = sys.process.Process("git rev-parse HEAD").lines_!.head
+  private[this] def gitHash(): String = sys.process.Process("git rev-parse HEAD").lineStream_!.head
 
   private[this] val tagName = Def.setting{
     s"v${if (releaseUseGlobalVersion.value) (version in ThisBuild).value else version.value}"
@@ -167,6 +168,7 @@ object build {
       Tests.Argument(TestFrameworks.ScalaCheck, scalacheckOptions: _*)
     },
     genTypeClasses := {
+      val s = streams.value
       typeClasses.value.flatMap { tc =>
         val dir = name.value match {
           case ConcurrentName =>
@@ -174,7 +176,7 @@ object build {
           case _ =>
             ScalazCrossType.shared(baseDirectory.value, "main")
         }
-        typeclassSource(tc).sources.map(_.createOrUpdate(dir, streams.value.log))
+        typeclassSource(tc).sources.map(_.createOrUpdate(dir, s.log))
       }
     },
     checkGenTypeClasses := {
@@ -265,9 +267,9 @@ object build {
       ),
     // kind-projector plugin
     resolvers += Resolver.sonatypeRepo("releases"),
-    kindProjectorVersion := "0.9.4",
+    kindProjectorVersion := "0.9.5",
     libraryDependencies += compilerPlugin("org.spire-math" % "kind-projector" % kindProjectorVersion.value cross CrossVersion.binary)
-  ) ++ osgiSettings ++ Seq[Sett](
+  ) ++ SbtOsgi.projectSettings ++ Seq[Sett](
     OsgiKeys.additionalHeaders := Map("-removeheaders" -> "Include-Resource,Private-Package")
   )
 
@@ -350,26 +352,37 @@ object build {
       Some("releases" at nexus + "service/local/staging/deploy/maven2")
   }
 
-  lazy val credentialsSetting = credentials += {
-    Seq("build.publish.user", "build.publish.password") map sys.props.get match {
-      case Seq(Some(user), Some(pass)) =>
-        Credentials("Sonatype Nexus Repository Manager", "oss.sonatype.org", user, pass)
+  lazy val credentialsSetting = credentials ++= {
+    val name = "Sonatype Nexus Repository Manager"
+    val realm = "oss.sonatype.org"
+    (
+      sys.props.get("build.publish.user"),
+      sys.props.get("build.publish.password"),
+      sys.env.get("SONATYPE_USERNAME"),
+      sys.env.get("SONATYPE_PASSWORD")
+    ) match {
+      case (Some(user), Some(pass), _, _)  => Seq(Credentials(name, realm, user, pass))
+      case (_, _, Some(user), Some(pass))  => Seq(Credentials(name, realm, user, pass))
       case _                           =>
-        Credentials(Path.userHome / ".ivy2" / ".credentials")
+        val ivyFile = Path.userHome / ".ivy2" / ".credentials"
+        val m2File = Path.userHome / ".m2" / "credentials"
+        if (ivyFile.exists()) Seq(Credentials(ivyFile))
+        else if (m2File.exists()) Seq(Credentials(m2File))
+        else Nil
     }
   }
 
-  lazy val genTypeClasses = TaskKey[Seq[(FileStatus, File)]]("gen-type-classes")
+  lazy val genTypeClasses = taskKey[Seq[(FileStatus, File)]]("")
 
-  lazy val typeClasses = TaskKey[Seq[TypeClass]]("type-classes")
+  lazy val typeClasses = taskKey[Seq[TypeClass]]("")
 
-  lazy val genToSyntax = TaskKey[String]("gen-to-syntax")
+  lazy val genToSyntax = taskKey[String]("")
 
-  lazy val showDoc = TaskKey[Unit]("show-doc")
+  lazy val showDoc = taskKey[Unit]("")
 
-  lazy val typeClassTree = TaskKey[String]("type-class-tree", "Generates scaladoc formatted tree of type classes.")
+  lazy val typeClassTree = taskKey[String]("Generates scaladoc formatted tree of type classes.")
 
-  lazy val checkGenTypeClasses = TaskKey[Unit]("check-gen-type-classes")
+  lazy val checkGenTypeClasses = taskKey[Unit]("")
 
   def osgiExport(packs: String*) = OsgiKeys.exportPackage := packs.map(_ + ".*;version=${Bundle-Version}")
 }

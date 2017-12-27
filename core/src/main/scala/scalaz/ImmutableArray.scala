@@ -16,14 +16,15 @@ import Liskov.>~>
 sealed abstract class ImmutableArray[+A] {
   protected[this] def elemTag: ClassTag[A]
 
-  def apply(index: Int): A
+  // these methods are not total
+  private[scalaz] def apply(index: Int): A
+  private[scalaz] def copyToArray[B](xs: Array[B], start: Int, len: Int)(implicit ev: B >~> A): Unit
 
   def length: Int
 
   def isEmpty: Boolean = length == 0
 
   def toArray[B: ClassTag](implicit ev: B >~> A): Array[B]
-  def copyToArray[B](xs: Array[B], start: Int, len: Int)(implicit ev: B >~> A): Unit
   def slice(from: Int, until: Int): ImmutableArray[A]
 
   def ++[B: ClassTag](other: ImmutableArray[B])(implicit ev: B >~> A): ImmutableArray[B]

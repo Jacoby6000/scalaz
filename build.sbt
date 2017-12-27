@@ -1,7 +1,16 @@
 import build._
 import com.typesafe.sbt.osgi.OsgiKeys
-import org.scalajs.sbtplugin.cross._
 import sbtcrossproject.CrossPlugin.autoImport.crossProject
+
+/*
+ * NOTICE if you are a contributor who only cares about the JVM, create a file
+ * `local.sbt` containing
+ *
+ *   onLoad in Global := { s => "project rootJVM" :: s }
+ *
+ * and regular commands such as "compile" / "test" will skip over all the
+ * scalajs / scala-native stuff.
+ */
 
 lazy val jsProjects = Seq[ProjectReference](
   coreJS, effectJS, iterateeJS, scalacheckBindingJS, testsJS
@@ -17,25 +26,27 @@ lazy val nativeProjects = Seq[ProjectReference](
 
 lazy val scalaz = Project(
   id = "scalaz",
-  base = file("."),
-  settings = standardSettings ++ Seq[Sett](
-    description := "scalaz unidoc",
-    artifacts := Classpaths.artifactDefs(Seq(packageDoc in Compile, makePom in Compile)).value,
-    packagedArtifacts := Classpaths.packaged(Seq(packageDoc in Compile, makePom in Compile)).value,
-    pomPostProcess := { node =>
-      import scala.xml._
-      import scala.xml.transform._
-      val rule = new RewriteRule {
-        override def transform(n: Node) =
-          if (n.label == "dependencies") NodeSeq.Empty else n
-      }
-      new RuleTransformer(rule).transform(node)(0)
-    },
-    unidocProjectFilter in (ScalaUnidoc, unidoc) := {
-      (jsProjects ++ nativeProjects).foldLeft(inAnyProject)((acc, a) => acc -- inProjects(a))
+  base = file(".")
+).settings(
+  standardSettings,
+  description := "scalaz unidoc",
+  artifacts := Classpaths.artifactDefs(Seq(packageDoc in Compile, makePom in Compile)).value,
+  packagedArtifacts := Classpaths.packaged(Seq(packageDoc in Compile, makePom in Compile)).value,
+  pomPostProcess := { node =>
+    import scala.xml._
+    import scala.xml.transform._
+    val rule = new RewriteRule {
+      override def transform(n: Node) =
+        if (n.label == "dependencies") NodeSeq.Empty else n
     }
-  ) ++ Defaults.packageTaskSettings(packageDoc in Compile, (unidoc in Compile).map(_.flatMap(Path.allSubpaths))),
-  aggregate = jvmProjects ++ jsProjects
+    new RuleTransformer(rule).transform(node)(0)
+  },
+  unidocProjectFilter in (ScalaUnidoc, unidoc) := {
+    (jsProjects ++ nativeProjects).foldLeft(inAnyProject)((acc, a) => acc -- inProjects(a))
+  },
+  Defaults.packageTaskSettings(packageDoc in Compile, (unidoc in Compile).map(_.flatMap(Path.allSubpaths)))
+).aggregate(
+  jvmProjects ++ jsProjects : _*
 ).enablePlugins(ScalaUnidocPlugin)
 
 lazy val rootNative = Project(
@@ -68,15 +79,16 @@ lazy val coreNative = core.native
 
 lazy val concurrent = Project(
   id = "concurrent",
-  base = file("concurrent"),
-  settings = standardSettings ++ Seq(
-    name := ConcurrentName,
-    scalacOptions in (Compile, compile) += "-Xfatal-warnings",
-    typeClasses := TypeClass.concurrent,
-    osgiExport("scalaz.concurrent"),
-    OsgiKeys.importPackage := Seq("javax.swing;resolution:=optional", "*")
-  ),
-  dependencies = Seq(coreJVM, effectJVM)
+  base = file("concurrent")
+).settings(
+  standardSettings,
+  name := ConcurrentName,
+  scalacOptions in (Compile, compile) += "-Xfatal-warnings",
+  typeClasses := TypeClass.concurrent,
+  osgiExport("scalaz.concurrent"),
+  OsgiKeys.importPackage := Seq("javax.swing;resolution:=optional", "*")
+).dependsOn(
+  coreJVM, effectJVM
 )
 
 lazy val effectJVM = effect.jvm
@@ -89,16 +101,15 @@ lazy val iterateeNative = iteratee.native
 
 lazy val example = Project(
   id = "example",
-  base = file("example"),
-  dependencies = Seq(coreJVM, iterateeJVM, concurrent),
-  settings = standardSettings ++ Seq[Sett](
-    name := "scalaz-example",
-    publishArtifact := false
-  )
+  base = file("example")
 ).settings(
+  standardSettings,
+  name := "scalaz-example",
+  notPublish,
   scalacOptions in (Compile, compile) -= "-Yno-adapted-args"
+).dependsOn(
+  coreJVM, iterateeJVM, concurrent
 )
-
 lazy val scalacheckBinding =
   crossProject(JVMPlatform, JSPlatform).crossType(ScalazCrossType)
     .in(file("scalacheck-binding"))
@@ -121,7 +132,7 @@ lazy val tests = crossProject(JSPlatform, JVMPlatform).crossType(ScalazCrossType
   .settings(standardSettings)
   .settings(
     name := "scalaz-tests",
-    publishArtifact := false,
+    notPublish,
     libraryDependencies += "org.scalacheck" %%% "scalacheck" % scalaCheckVersion.value % "test")
   .dependsOn(core, effect, iteratee, scalacheckBinding)
   .jvmConfigure(_ dependsOn concurrent)

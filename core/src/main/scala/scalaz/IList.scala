@@ -475,13 +475,14 @@ sealed abstract class IList[A] extends Product with Serializable {
 
 }
 
-// In order to get exhaustiveness checking and a sane unapply in both 2.9 and 2.10 it seems
-// that we need to use bare case classes. Sorry. Suggestions welcome.
-final case class INil[A]() extends IList[A]
+sealed abstract case class INil[A] private() extends IList[A]
+object INil {
+  private[this] val value: INil[Nothing] = new INil[Nothing]{}
+  def apply[A](): IList[A] = value.asInstanceOf[IList[A]]
+}
 final case class ICons[A](head: A, tail: IList[A]) extends IList[A]
 
 object IList extends IListInstances {
-  private[this] val nil: IList[Nothing] = INil()
 
   def apply[A](as: A*): IList[A] =
     as.foldRight(empty[A])(ICons(_, _))
@@ -490,7 +491,7 @@ object IList extends IListInstances {
     ICons(a, empty)
 
   def empty[A]: IList[A] =
-    nil.asInstanceOf[IList[A]]
+    INil()
 
   def fromList[A](as: List[A]): IList[A] =
     as.foldRight(empty[A])(ICons(_, _))
@@ -517,6 +518,14 @@ object IList extends IListInstances {
       def to[A](fa: List[A]) = fromList(fa)
       def from[A](fa: IList[A]) = fa.toList
     }
+
+  object :: {
+    def unapply[A](xs: IList[A]): Option[(A, IList[A])] = xs match {
+      case ICons(head, tail) => Some(head -> tail)
+      case INil()            => None
+    }
+  }
+
 }
 
 sealed abstract class IListInstance0 {
@@ -705,10 +714,20 @@ private trait IListEqual[A] extends Equal[IList[A]] {
   implicit def A: Equal[A]
 
   @tailrec final override def equal(a: IList[A], b: IList[A]): Boolean =
-    (a, b) match {
-      case (INil(), INil()) => true
-      case (ICons(a, as), ICons(b, bs)) if A.equal(a, b) => equal(as, bs)
-      case _ => false
+    (a eq b) || {
+      a match {
+        case ac: ICons[A] => b match {
+          case bc: ICons[A] =>
+            ((ac.head.asInstanceOf[AnyRef] eq bc.head.asInstanceOf[AnyRef])
+               || A.equal(ac.head, bc.head)) &&
+            equal(ac.tail, bc.tail)
+          case _ => false
+        }
+        case INil() => b match {
+          case INil() => true
+          case _ => false
+        }
+      }
     }
 
 }
